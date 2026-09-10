@@ -4,12 +4,15 @@
 
 """Best-effort private IM notifications for task continuation events."""
 
+import hashlib
+import json
 import logging
 from contextlib import contextmanager
 from typing import Any, Generator, Sequence
 
 from sqlalchemy.orm import Session
 
+from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
@@ -23,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 MESSAGER_KIND = "Messager"
 MESSAGER_USER_ID = 0
+RUNTIME_IM_NOTIFICATION_DEDUP_PREFIX = "channel:runtime_im_notification:"
+RUNTIME_IM_NOTIFICATION_DEDUP_TTL_SECONDS = 24 * 60 * 60
 SENSITIVE_CONFIG_KEYS = {
     "client_secret",
     "secret",
@@ -70,11 +75,28 @@ class IMNotificationDispatcher:
         status: str,
         content: str = "",
         source: str | None = None,
+        turn_key: str | None = None,
     ) -> dict[str, Any]:
         """Notify IM sessions about a runtime task update using priority rules."""
 
         if source == "im":
             return {"sent": 0, "results": [], "skipped": "im_source"}
+
+        dedup_key = _runtime_notification_dedup_key(
+            user_id=user_id,
+            address=address,
+            status=status,
+            content=content,
+            turn_key=turn_key,
+        )
+        if dedup_key and not await self._claim_runtime_notification(dedup_key):
+            logger.info(
+                "[IMNotificationDispatcher] Skipped duplicate runtime update: "
+                "user_id=%s key=%s",
+                user_id,
+                dedup_key,
+            )
+            return {"sent": 0, "results": [], "skipped": "duplicate_turn"}
 
         sessions = await self._runtime_notification_sessions(
             db=db,
@@ -103,6 +125,7 @@ class IMNotificationDispatcher:
         status: str,
         content: str = "",
         source: str | None = None,
+        turn_key: str | None = None,
     ) -> dict[str, Any]:
         """Notify IM sessions about a runtime task update without exposing DB plumbing."""
 
@@ -115,6 +138,7 @@ class IMNotificationDispatcher:
                 status=status,
                 content=content,
                 source=source,
+                turn_key=turn_key,
             )
 
     async def send_text(
@@ -235,6 +259,15 @@ class IMNotificationDispatcher:
                 Kind.is_active == True,
             )
             .first()
+        )
+
+    async def _claim_runtime_notification(self, dedup_key: str) -> bool:
+        """Atomically claim one runtime turn for IM delivery."""
+
+        return await cache_manager.setnx(
+            dedup_key,
+            "1",
+            expire=RUNTIME_IM_NOTIFICATION_DEDUP_TTL_SECONDS,
         )
 
     async def _send_dingtalk(
@@ -416,6 +449,42 @@ def _result_message_id(result: dict[str, Any]) -> int | str | None:
     if isinstance(message_id, (int, str)) and not isinstance(message_id, bool):
         return message_id
     return None
+
+
+def _runtime_notification_dedup_key(
+    *,
+    user_id: int,
+    address: dict[str, Any],
+    status: str,
+    content: str,
+    turn_key: str | None,
+) -> str:
+    """Build a stable key that identifies one terminal runtime turn."""
+
+    device_id = str(address.get("deviceId") or address.get("device_id") or "").strip()
+    local_task_id = str(
+        address.get("localTaskId") or address.get("local_task_id") or ""
+    ).strip()
+    if not device_id or not local_task_id:
+        return ""
+
+    normalized_turn_key = str(turn_key or "").strip()
+    if not normalized_turn_key:
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        normalized_turn_key = f"{status}:{content_hash}"
+
+    identity = json.dumps(
+        {
+            "deviceId": device_id,
+            "localTaskId": local_task_id,
+            "turnKey": normalized_turn_key,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"{RUNTIME_IM_NOTIFICATION_DEDUP_PREFIX}{user_id}:{digest}"
 
 
 @contextmanager

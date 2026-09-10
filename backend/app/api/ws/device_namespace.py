@@ -699,6 +699,18 @@ def _normalize_runtime_task_status(status: Any) -> str:
     return status.strip().replace("_", "").replace("-", "").lower()
 
 
+def _runtime_notification_turn_key(payload: dict[str, Any]) -> str | None:
+    """Return a stable identity for one terminal runtime turn."""
+
+    for field_name in ("turnId", "turn_id", "subtaskId", "subtask_id"):
+        value = payload.get(field_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return str(value)
+    return None
+
+
 def response_api_payload(*, data: dict[str, Any], device_id: str) -> dict[str, Any]:
     payload = dict(data)
     payload["device_id"] = device_id
@@ -3201,6 +3213,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 status=status,
                 content=content,
                 source="codex_watcher",
+                turn_key=str(data.get("turnId") or data.get("turn_id") or "").strip()
+                or None,
             )
         )
         notified = int(notification.get("sent") or 0)
@@ -3386,6 +3400,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     status=status,
                     content=content,
                     source=str(source_name) if source_name else None,
+                    turn_key=_runtime_notification_turn_key(payload),
                 )
             )
         except Exception:
