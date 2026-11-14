@@ -17,7 +17,6 @@ pub enum MaintenanceScan {
         created_after: NaiveDateTime,
     },
     CursorLatest,
-    RuntimeExecutors,
     CleanupPrimary {
         last_id: i64,
         cutoff: NaiveDateTime,
@@ -71,13 +70,20 @@ pub async fn scan_group_chats_table<M: Mysql>(
 
 pub fn maintenance_statement(table: &str, scan: &MaintenanceScan) -> String {
     let condition = match scan {
-        MaintenanceScan::RunningDevices => "status = 'RUNNING' AND executor_name LIKE 'device-%'".to_owned(),
+        MaintenanceScan::RunningDevices => {
+            "status = 'RUNNING' AND executor_name LIKE 'device-%'".to_owned()
+        }
         MaintenanceScan::RunningSince { .. } => "status = 'RUNNING' AND created_at >= ?".to_owned(),
-        MaintenanceScan::CursorRecent { .. } => "created_at >= ? ORDER BY created_at, id LIMIT 1".to_owned(),
+        MaintenanceScan::CursorRecent { .. } => {
+            "created_at >= ? ORDER BY created_at, id LIMIT 1".to_owned()
+        }
         MaintenanceScan::CursorLatest => "1 = 1 ORDER BY id DESC LIMIT 1".to_owned(),
-        MaintenanceScan::RuntimeExecutors => "executor_name IS NOT NULL AND executor_name != '' AND executor_deleted_at = false ORDER BY updated_at, id".to_owned(),
-        MaintenanceScan::CleanupPrimary { limit, .. } => format!("id > ? AND created_at <= ? ORDER BY id LIMIT {limit}"),
-        MaintenanceScan::CleanupLookback { limit, .. } => format!("status IN ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED') AND created_at > ? AND created_at <= ? AND executor_name IS NOT NULL AND executor_name != '' AND executor_deleted_at = false ORDER BY created_at, id LIMIT {limit}"),
+        MaintenanceScan::CleanupPrimary { limit, .. } => {
+            format!("id > ? AND created_at <= ? ORDER BY id LIMIT {limit}")
+        }
+        MaintenanceScan::CleanupLookback { limit, .. } => format!(
+            "status IN ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED') AND created_at > ? AND created_at <= ? AND executor_name IS NOT NULL AND executor_name != '' AND executor_deleted_at = false ORDER BY created_at, id LIMIT {limit}"
+        ),
     };
     format!("SELECT {SUBTASK_COLUMNS} FROM `{table}` WHERE {condition}")
 }
@@ -89,9 +95,9 @@ pub async fn scan_table<M: Mysql>(
 ) -> MysqlResult<Vec<MysqlRow>> {
     let statement = maintenance_statement(table, scan);
     match scan {
-        MaintenanceScan::RunningDevices
-        | MaintenanceScan::RuntimeExecutors
-        | MaintenanceScan::CursorLatest => mysql.fetch_all(statement, ()).await,
+        MaintenanceScan::RunningDevices | MaintenanceScan::CursorLatest => {
+            mysql.fetch_all(statement, ()).await
+        }
         MaintenanceScan::RunningSince { created_after }
         | MaintenanceScan::CursorRecent { created_after } => {
             mysql.fetch_all(statement, (*created_after,)).await
@@ -110,7 +116,6 @@ pub fn order_scan(rows: &mut Vec<MysqlRow>, scan: &MaintenanceScan) -> MysqlResu
     let (time_column, limit) = match scan {
         MaintenanceScan::CleanupPrimary { limit, .. } => (None, Some(*limit)),
         MaintenanceScan::CleanupLookback { limit, .. } => (Some("created_at"), Some(*limit)),
-        MaintenanceScan::RuntimeExecutors => (Some("updated_at"), None),
         MaintenanceScan::CursorRecent { .. } => (Some("created_at"), Some(1)),
         MaintenanceScan::CursorLatest => {
             let mut keyed = rows

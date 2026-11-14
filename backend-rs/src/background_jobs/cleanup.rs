@@ -294,7 +294,6 @@ struct Group {
     tasks: BTreeSet<i64>,
     subtasks: BTreeMap<i64, BTreeSet<i64>>,
     latest: Option<NaiveDateTime>,
-    blocked: bool,
 }
 
 impl Group {
@@ -349,6 +348,8 @@ async fn cleanup_batch(
         .map(|row| row.task_id)
         .collect::<BTreeSet<_>>();
     let mut groups: BTreeMap<(String, String), Group> = BTreeMap::new();
+    // Executor names embed the owning task id, so executors are task-local.
+    // Grouping only the candidate task's subtasks avoids a global subtask scan.
     for id in valid {
         let rows = state.task_store.list_subtasks_by_task(id).await?;
         for subtask in rows.into_iter().map(Subtask::read) {
@@ -366,24 +367,10 @@ async fn cleanup_batch(
     if groups.is_empty() {
         return Ok(0);
     }
-    for row in state
-        .task_store
-        .scan_maintenance_subtasks(&MaintenanceScan::RuntimeExecutors)
-        .await?
-    {
-        let subtask = Subtask::read(row)?;
-        if let Some(group) = groups.get_mut(&(subtask.namespace.clone(), subtask.executor.clone()))
-        {
-            if !group.tasks.contains(&subtask.task_id) {
-                group.blocked = true;
-            }
-            group.add(&subtask);
-        }
-    }
     let mut deleted = 0;
     for ((namespace, executor), group) in groups {
         check_cancel(context)?;
-        if group.blocked || executor.starts_with("device-") {
+        if executor.starts_with("device-") {
             continue;
         }
         match delete_group(state, context, &tasks, &group, &namespace, &executor, now).await {
