@@ -49,6 +49,7 @@ from app.services.chat.trigger.lifecycle import prepare_execution_session
 from app.services.chat.trigger.unified import build_execution_request
 from app.services.context import context_service
 from app.services.task_fork_history import task_fork_history_resolver
+from app.services.task_skill_selection import additional_skills_to_dicts
 from app.stores.tasks import subtask_store, task_store
 
 if TYPE_CHECKING:
@@ -641,7 +642,7 @@ def _handoff_params(
         ),
         model_options=getattr(payload, "model_options", None),
         task_type=getattr(payload, "task_type", None),
-        additional_skills=_additional_skills_to_dicts(
+        additional_skills=additional_skills_to_dicts(
             getattr(payload, "additional_skills", None)
         ),
         pipeline_bot_ids=[advance_result["next_stage_bot_id"]],
@@ -677,23 +678,6 @@ def _default_pipeline_payload(task: TaskResource) -> SimpleNamespace:
         enable_clarification=False,
         interactive_form_answer=None,
     )
-
-
-def _additional_skills_to_dicts(
-    additional_skills: Any,
-) -> Optional[list[dict[str, Any]]]:
-    if not additional_skills:
-        return None
-    result: list[dict[str, Any]] = []
-    for skill in additional_skills:
-        result.append(
-            {
-                "name": getattr(skill, "name", None),
-                "namespace": getattr(skill, "namespace", None),
-                "is_public": getattr(skill, "is_public", False),
-            }
-        )
-    return result
 
 
 def _generate_params_to_dict(generate_params: Any) -> Optional[dict[str, Any]]:

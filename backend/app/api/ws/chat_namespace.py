@@ -87,6 +87,7 @@ from app.services.chat.trigger import (
 )
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.task_fork_history import task_fork_history_resolver
+from app.services.task_skill_selection import additional_skills_to_dicts
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
@@ -1018,12 +1019,9 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Build TaskCreationParams from request
             # Convert additional_skills to list of dicts if present
-            additional_skills_dicts = None
-            if payload.additional_skills:
-                additional_skills_dicts = [
-                    {"name": s.name, "namespace": s.namespace, "is_public": s.is_public}
-                    for s in payload.additional_skills
-                ]
+            additional_skills_dicts = additional_skills_to_dicts(
+                payload.additional_skills
+            )
 
             # For pipeline mode, use the bot_ids from pipeline_info
             pipeline_bot_ids = None

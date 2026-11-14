@@ -70,6 +70,14 @@ def build_task_skill_labels(skills: Optional[List[Any]]) -> Dict[str, str]:
     }
 
 
+def additional_skills_to_dicts(
+    skills: Optional[List[Any]],
+) -> Optional[List[Dict[str, Any]]]:
+    """Serialize request-scoped Skill selections while preserving their identity."""
+    normalized = normalize_requested_skill_refs(skills)
+    return normalized or None
+
+
 def parse_requested_skill_refs_from_labels(
     labels: Optional[Dict[str, str]],
 ) -> List[Dict[str, Any]]:

@@ -7,6 +7,7 @@ import json
 import pytest
 
 from app.services.task_skill_selection import (
+    additional_skills_to_dicts,
     build_task_skill_labels,
     parse_requested_skill_refs_from_labels,
 )
@@ -103,4 +104,39 @@ def test_build_task_skill_labels_deduplicates_by_name_with_last_value_winning():
             "namespace": "mobile-b",
             "is_public": False,
         },
+    ]
+
+
+def test_additional_skills_to_dicts_preserves_positive_skill_id():
+    from app.api.ws.events import SkillRef
+
+    assert additional_skills_to_dicts(
+        [SkillRef(skill_id=42, name="pdf", namespace="default", is_public=False)]
+    ) == [
+        {
+            "name": "pdf",
+            "namespace": "default",
+            "is_public": False,
+            "skill_id": 42,
+        }
+    ]
+
+
+@pytest.mark.parametrize("skill_id", [None, 0, -1, "invalid", True, 1.5])
+def test_additional_skills_to_dicts_drops_invalid_skill_id(skill_id):
+    assert additional_skills_to_dicts(
+        [
+            {
+                "name": "pdf",
+                "namespace": "default",
+                "is_public": False,
+                "skill_id": skill_id,
+            }
+        ]
+    ) == [
+        {
+            "name": "pdf",
+            "namespace": "default",
+            "is_public": False,
+        }
     ]
